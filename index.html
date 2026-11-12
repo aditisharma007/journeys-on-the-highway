@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Journeys on the highway</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: rgba(13, 20, 36, 0.84);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+    canvas#highway { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 1; }
+
+    /* Top Bar */
+    .topbar {
+      position: fixed; top: 14px; left: 16px; right: 16px; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      pointer-events: none;
+    }
+    .brand-card, .action-group {
+      pointer-events: auto;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    }
+    .brand-title { font-weight: 700; font-size: 15px; letter-spacing: 0.2px; }
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: #34d399; background: rgba(16, 185, 129, 0.14);
+      padding: 3px 9px; border-radius: 999px; font-weight: 600;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
+
+    .btn {
+      background: rgba(255,255,255,0.08); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { background: rgba(255,255,255,0.16); }
+    .btn-primary { background: #3b82f6; border-color: #60a5fa; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+
+    /* Spectrum Bar */
+    .spectrum-wrap {
+      position: fixed; top: 70px; left: 16px; right: 16px; z-index: 9;
+      pointer-events: none; display: flex; flex-direction: column; align-items: center;
+    }
+    .spectrum-bar {
+      width: 100%; max-width: 680px; height: 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.1); overflow: hidden; display: flex;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .spectrum-seg { height: 100%; transition: width 0.5s ease; }
+
+    /* Bottom Dock */
+    .dock {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+      width: calc(100% - 24px); max-width: 760px;
+      background: var(--panel); backdrop-filter: blur(16px);
+      border: 1px solid var(--border); border-radius: 18px;
+      padding: 12px 14px; box-shadow: 0 14px 40px rgba(0,0,0,0.55);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .emotions-row {
+      display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+    .emotions-row::-webkit-scrollbar { display: none; }
+    .emo-chip {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+      padding: 8px 13px; border-radius: 999px; cursor: pointer;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+      color: var(--text); font-size: 13px; font-weight: 600; transition: 0.15s;
+    }
+    .emo-chip.active { border-color: #fff; background: rgba(255,255,255,0.18); transform: translateY(-1px); }
+    .swatch { width: 12px; height: 12px; border-radius: 50%; }
+
+    .input-row { display: flex; gap: 8px; }
+    .input-row input {
+      flex: 1; background: rgba(0,0,0,0.35); border: 1px solid var(--border);
+      border-radius: 11px; padding: 10px 13px; color: #fff; font-size: 14px; outline: none;
+    }
+    .input-row input:focus { border-color: #60a5fa; }
+
+    /* Modals */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(3, 7, 18, 0.78);
+      backdrop-filter: blur(8px); z-index: 30;
+      display: none; align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-card {
+      width: 100%; max-width: 400px; background: #0f172a;
+      border: 1px solid var(--border); border-radius: 20px; padding: 22px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.7); text-align: center;
+    }
+    .modal-card h2 { font-size: 18px; margin-bottom: 6px; }
+    .modal-card p { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+    #qrCanvas { background: #fff; padding: 12px; border-radius: 14px; margin: 0 auto 14px; display: block; }
+    .memory-quote {
+      font-size: 17px; line-height: 1.55; color: #fff;
+      background: rgba(255,255,255,0.05); border-radius: 14px;
+      padding: 18px; margin: 12px 0 16px; word-break: break-word;
+    }
+    .url-box {
+      width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--border);
+      color: #cbd5e1; padding: 8px 10px; border-radius: 9px; font-size: 12px; margin-bottom: 12px;
+    }
+    .modal-actions { display: flex; gap: 8px; justify-content: center; }
+
+    /* Scanner Video */
+    #scannerVideo {
+      width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
+      border-radius: 14px; background: #020617; margin-bottom: 12px;
+      border: 2px solid #38bdf8;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="highway"></canvas>
+
+<div class="topbar">
+  <div class="brand-card">
+    <span class="brand-title">Journeys on the highway</span>
+    <span class="live-badge"><span class="dot"></span><span id="onlineCount">1</span> live</span>
+  </div>
+  <div class="action-group">
+    <button class="btn" id="openScannerBtn">Scan QR</button>
+    <button class="btn btn-primary" id="openQrBtn">Share QR</button>
+  </div>
+</div>
+
+<div class="spectrum-wrap">
+  <div class="spectrum-bar" id="spectrumBar"></div>
+</div>
+
+<div class="dock">
+  <div class="emotions-row" id="emotionsRow"></div>
+  <div class="input-row">
+    <button class="btn" id="paintOnlyBtn">Paint Road</button>
+    <input type="text" id="memoryInput" maxlength="240" placeholder="Leave an anonymous memory on the highway..." />
+    <button class="btn btn-primary" id="plantBtn">Add</button>
+  </div>
+</div>
+
+<!-- Share QR Modal -->
+<div class="modal-backdrop" id="qrModal">
+  <div class="modal-card">
+    <h2>Journeys on the highway</h2>
+    <p>Scan with any phone camera to paint the highway and leave anonymous memories live.</p>
+    <canvas id="qrCanvas" width="232" height="232"></canvas>
+    <input type="text" class="url-box" id="qrUrlInput" />
+    <div class="modal-actions">
+      <button class="btn" id="copyUrlBtn">Copy Link</button>
+      <button class="btn btn-primary" id="downloadQrBtn">Download QR</button>
+      <button class="btn" id="closeQrBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Camera QR Scanner Modal -->
+<div class="modal-backdrop" id="scannerModal">
+  <div class="modal-card">
+    <h2>QR Code Scanner</h2>
+    <p>Point your camera at a Journeys on the highway QR code.</p>
+    <video id="scannerVideo" playsinline autoplay muted></video>
+    <p id="scannerStatus" style="color:#38bdf8;font-weight:600;">Initializing camera...</p>
+    <div class="modal-actions">
+      <button class="btn" id="closeScannerBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Anonymous Memory Reader Modal (Only memory pops, rest anonymous) -->
+<div class="modal-backdrop" id="memoryModal">
+  <div class="modal-card">
+    <div id="memoryTag" style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:700;"></div>
+    <div class="memory-quote" id="memoryText"></div>
+    <button class="btn btn-primary" id="closeMemoryBtn">Close</button>
+  </div>
+</div>
+
+<script>
+  const EMOTIONS = [
+    { name: 'Joy',     color: '#facc15' },
+    { name: 'Peace',   color: '#34d399' },
+    { name: 'Love',    color: '#fb7185' },
+    { name: 'Hope',    color: '#38bdf8' },
+    { name: 'Passion', color: '#f97316' },
+    { name: 'Grief',   color: '#818cf8' },
+    { name: 'Anxiety', color: '#c084fc' }
+  ];
+
+  let selectedEmotion = EMOTIONS[0];
+  let bands = [];
+  let memories = [];
+  let counts = { Joy: 0, Peace: 0, Love: 0, Grief: 0, Passion: 0, Anxiety: 0, Hope: 0 };
+  let roadScroll = 0;
+  let renderedPins = [];
+
+  // Connect to live multiplayer Socket.IO server
+  const socket = io();
+
+  socket.on('init_state', (serverState) => {
+    bands = serverState.bands || [];
+    memories = serverState.memories || [];
+    counts = serverState.counts || counts;
+    document.getElementById('onlineCount').textContent = serverState.onlineCount || 1;
+    updateSpectrum();
+  });
+
+  socket.on('online_count', (count) => {
+    document.getElementById('onlineCount').textContent = count;
+  });
+
+  socket.on('emotion_painted', ({ band, counts: newCounts }) => {
+    bands.push(band);
+    if (bands.length > 180) bands.shift();
+    counts = newCounts;
+    updateSpectrum();
+  });
+
+  socket.on('memory_added', ({ memory, band, counts: newCounts }) => {
+    memories.push(memory);
+    if (memories.length > 120) memories.shift();
+    bands.push(band);
+    if (bands.length > 180) bands.shift();
+    counts = newCounts;
+    updateSpectrum();
+  });
+
+  // Render Emotion Selector Chips
+  const emotionsRow = document.getElementById('emotionsRow');
+  EMOTIONS.forEach((emo, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'emo-chip' + (idx === 0 ? ' active' : '');
+    btn.innerHTML = `<span class="swatch" style="background:${emo.color}"></span>${emo.name}`;
+    btn.onclick = () => {
+      document.querySelectorAll('.emo-chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      selectedEmotion = emo;
+      socket.emit('paint_emotion', { emotion: emo.name, color: emo.color });
+    };
+    emotionsRow.appendChild(btn);
+  });
+
+  document.getElementById('paintOnlyBtn').onclick = () => {
+    socket.emit('paint_emotion', { emotion: selectedEmotion.name, color: selectedEmotion.color });
+  };
+
+  function submitMemory() {
+    const input = document.getElementById('memoryInput');
+    const text = input.value.trim();
+    if (!text) return;
+    socket.emit('add_memory', {
+      text,
+      emotion: selectedEmotion.name,
+      color: selectedEmotion.color
+    });
+    input.value = '';
+  }
+
+  document.getElementById('plantBtn').onclick = submitMemory;
+  document.getElementById('memoryInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitMemory();
+  });
+
+  function updateSpectrum() {
+    const bar = document.getElementById('spectrumBar');
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    bar.innerHTML = '';
+    if (total === 0) return;
+    EMOTIONS.forEach(emo => {
+      const val = counts[emo.name] || 0;
+      if (val > 0) {
+        const seg = document.createElement('div');
+        seg.className = 'spectrum-seg';
+        seg.style.width = ((val / total) * 100) + '%';
+        seg.style.background = emo.color;
+        bar.appendChild(seg);
+      }
+    });
+  }
+
+  // ==================== HIGHWAY + LUSH GREENERY CANVAS ====================
+  const canvas = document.getElementById('highway');
+  const ctx = canvas.getContext('2d');
+
+  function resize() {
+    canvas.width = window.innerWidth * devicePixelRatio;
+    canvas.height = window.innerHeight * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Pre-seed procedural roadside trees
+  const trees = Array.from({ length: 44 }, (_, i) => ({
+    side: i % 2 === 0 ? -1 : 1,
+    z: (i / 44),
+    offset: 1.25 + (i % 5) * 0.45,
+    scale: 0.75 + (i % 4) * 0.22,
+    shade: i % 3
+  }));
+
+  function drawTree(x, y, size, shade) {
+    const greens = ['#065f46', '#047857', '#15803d'];
+    const highlights = ['#10b981', '#22c55e', '#4ade80'];
+    // Trunk
+    ctx.fillStyle = '#3f2e21';
+    ctx.fillRect(x - size * 0.08, y - size * 0.35, size * 0.16, size * 0.35);
+    // Layered pine/foliage tiers
+    for (let t = 0; t < 3; t++) {
+      const ty = y - size * (0.3 + t * 0.28);
+      const tw = size * (0.65 - t * 0.14);
+      const th = size * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(x, ty - th);
+      ctx.lineTo(x - tw, ty);
+      ctx.lineTo(x + tw, ty);
+      ctx.closePath();
+      ctx.fillStyle = t === 2 ? highlights[shade] : greens[shade];
+      ctx.fill();
+    }
+  }
+
+  function animate() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const horizonY = h * 0.42;
+    const vanishX = w * 0.5;
+
+    roadScroll = (roadScroll + 0.0022) % 1;
+
+    // Sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+    sky.addColorStop(0, '#050814');
+    sky.addColorStop(0.65, '#0f1c38');
+    sky.addColorStop(1, '#1e3a5f');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, horizonY);
+
+    // Distant green hills
+    ctx.fillStyle = '#062c22';
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    ctx.quadraticCurveTo(w * 0.25, horizonY - 38, w * 0.5, horizonY - 12);
+    ctx.quadraticCurveTo(w * 0.78, horizonY - 46, w, horizonY);
+    ctx.lineTo(w, horizonY + 10);
+    ctx.lineTo(0, horizonY + 10);
+    ctx.fill();
+
+    // Lush green meadows flanking the highway
+    const grass = ctx.createLinearGradient(0, horizonY, 0, h);
+    grass.addColorStop(0, '#064e3b');
+    grass.addColorStop(0.45, '#065f46');
+    grass.addColorStop(1, '#022c22');
+    ctx.fillStyle = grass;
+    ctx.fillRect(0, horizonY, w, h - horizonY);
+
+    // Highway trapezoid
+    const roadTopW = Math.max(26, w * 0.032);
+    const roadBotW = Math.min(w * 0.88, 760);
+
+    ctx.beginPath();
+    ctx.moveTo(vanishX - roadTopW / 2, horizonY);
+    ctx.lineTo(vanishX + roadTopW / 2, horizonY);
+    ctx.lineTo(vanishX + roadBotW / 2, h);
+    ctx.lineTo(vanishX - roadBotW / 2, h);
+    ctx.closePath();
+    ctx.fillStyle = '#111827';
+    ctx.fill();
+
+    // Cumulative emotion color bands painted onto the highway
+    if (bands.length > 0) {
+      const visible = bands.slice(-90);
+      const count = visible.length;
+      for (let i = 0; i < count; i++) {
+        const t0 = i / count;
+        const t1 = (i + 1) / count;
+        // Perspective curve
+        const p0 = Math.pow(t0, 1.55);
+        const p1 = Math.pow(t1, 1.55);
+
+        const y0 = horizonY + p0 * (h - horizonY);
+        const y1 = horizonY + p1 * (h - horizonY);
+        const w0 = roadTopW + p0 * (roadBotW - roadTopW);
+        const w1 = roadTopW + p1 * (roadBotW - roadTopW);
+
+        ctx.beginPath();
+        ctx.moveTo(vanishX - w0 * 0.47, y0);
+        ctx.lineTo(vanishX + w0 * 0.47, y0);
+        ctx.lineTo(vanishX + w1 * 0.47, y1);
+        ctx.lineTo(vanishX - w1 * 0.47, y1);
+        ctx.closePath();
+        ctx.fillStyle = visible[i].color;
+        ctx.globalAlpha = 0.72;
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Highway edge lines & dashed center divider
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(vanishX - roadTopW / 2, horizonY);
+    ctx.lineTo(vanishX - roadBotW / 2, h);
+    ctx.moveTo(vanishX + roadTopW / 2, horizonY);
+    ctx.lineTo(vanishX + roadBotW / 2, h);
+    ctx.stroke();
+
+    // Moving dashed lane markers
+    for (let d = 0; d < 14; d++) {
+      const rawT = ((d / 14) + roadScroll) % 1;
+      const nextT = Math.min(1, rawT + 0.035);
+      const p0 = Math.pow(rawT, 1.7);
+      const p1 = Math.pow(nextT, 1.7);
+      const y0 = horizonY + p0 * (h - horizonY);
+      const y1 = horizonY + p1 * (h - horizonY);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1.5 + p0 * 3;
+      ctx.beginPath();
+      ctx.moveTo(vanishX, y0);
+      ctx.lineTo(vanishX, y1);
+      ctx.stroke();
+    }
+
+    // Roadside trees sorted back-to-front
+    const sortedTrees = trees
+      .map(t => ({ ...t, curZ: (t.z + roadScroll) % 1 }))
+      .sort((a, b) => a.curZ - b.curZ);
+
+    for (const t of sortedTrees) {
+      const p = Math.pow(t.curZ, 1.65);
+      const y = horizonY + p * (h - horizonY);
+      const roadW = roadTopW + p * (roadBotW - roadTopW);
+      const x = vanishX + t.side * (roadW * 0.5 + (28 + p * 260) * t.offset);
+      const size = (14 + p * 92) * t.scale;
+      drawTree(x, y, size, t.shade);
+    }
+
+    // Interactive Anonymous Memory Lanterns along the highway
+    renderedPins = [];
+    memories.forEach((mem, idx) => {
+      const baseZ = mem.zPos || ((idx * 0.17) % 0.85 + 0.1);
+      const p = Math.pow(baseZ, 1.45);
+      const y = horizonY + p * (h - horizonY - 95);
+      const roadW = roadTopW + p * (roadBotW - roadTopW);
+      const x = vanishX + (mem.laneOffset || 0) * (roadW * 0.36);
+      const radius = 8 + p * 11;
+
+      // Glow aura
+      const grad = ctx.createRadialGradient(x, y, 1, x, y, radius * 2.5);
+      grad.addColorStop(0, mem.color);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core orb
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      renderedPins.push({ x, y, r: radius * 2.2, memory: mem });
+    });
+
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+
+  // Tap memory lantern -> only the memory pops, rest anonymous
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    for (let i = renderedPins.length - 1; i >= 0; i--) {
+      const pin = renderedPins[i];
+      const dist = Math.hypot(mx - pin.x, my - pin.y);
+      if (dist <= pin.r + 8) {
+        const tag = document.getElementById('memoryTag');
+        tag.textContent = pin.memory.emotion;
+        tag.style.background = pin.memory.color;
+        tag.style.color = '#090d16';
+        document.getElementById('memoryText').textContent = pin.memory.text;
+        document.getElementById('memoryModal').classList.add('open');
+        break;
+      }
+    }
+  });
+
+  document.getElementById('closeMemoryBtn').onclick = () => {
+    document.getElementById('memoryModal').classList.remove('open');
+  };
+
+  // ==================== ZERO-DEPENDENCY ISO QR GENERATOR ====================
+  // Generates scannable Version 1-6 Byte-Mode QR Codes natively
+  const PureQR = (() => {
+    const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      EXP[i] = x; LOG[x] = i;
+      x <<= 1; if (x & 0x100) x ^= 0x11d;
+    }
+    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+
+    function gfMul(a, b) { return (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]]; }
+    function rsGen(deg) {
+      let poly = [1];
+      for (let i = 0; i < deg; i++) {
+        const next = new Array(poly.length + 1).fill(0);
+        for (let j = 0; j < poly.length; j++) {
+          next[j] ^= poly[j];
+          next[j + 1] ^= gfMul(poly[j], EXP[i]);
+        }
+        poly = next;
+      }
+      return poly;
+    }
+    function rsEncode(data, ecLen) {
+      const gen = rsGen(ecLen);
+      const res = new Uint8Array(data.length + ecLen);
+      res.set(data);
+      for (let i = 0; i < data.length; i++) {
+        const coef = res[i];
+        if (coef !== 0) {
+          for (let j = 0; j < gen.length; j++) res[i + j] ^= gfMul(gen[j], coef);
+        }
+      }
+      return res.slice(data.length);
+    }
+
+    // Capacities for Level L (Version 1 to 6)
+    const VERSIONS = [
+      null,
+      { size: 21, total: 26,  ec: 7,  cap: 17, align: [] },
+      { size: 25, total: 44,  ec: 10, cap: 32, align: [6, 18] },
+      { size: 29, total: 70,  ec: 15, cap: 53, align: [6, 22] },
+      { size: 33, total: 100, ec: 20, cap: 78, align: [6, 26] },
+      { size: 37, total: 134, ec: 26, cap: 106, align: [6, 30] },
+      { size: 41, total: 172, ec: 36, cap: 134, align: [6, 34] }
+    ];
+
+    function makeMatrix(text) {
+      const bytes = new TextEncoder().encode(text);
+      let ver = 1;
+      while (ver <= 6 && VERSIONS[ver].cap < bytes.length) ver++;
+      if (ver > 6) ver = 6;
+      const cfg = VERSIONS[ver];
+      const payload = bytes.slice(0, cfg.cap);
+
+      const dataCodewords = cfg.total - cfg.ec;
+      const bits = [];
+      const pushBits = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+      pushBits(0b0100, 4); // Byte mode
+      pushBits(payload.length, 8);
+      for (const b of payload) pushBits(b, 8);
+      pushBits(0, Math.min(4, dataCodewords * 8 - bits.length));
+      while (bits.length % 8 !== 0) bits.push(0);
+
+      const cw = [];
+      for (let i = 0; i < bits.length; i += 8) {
+        let v = 0;
+        for (let b = 0; b < 8; b++) v = (v << 1) | bits[i + b];
+        cw.push(v);
+      }
+      const pads = [0xec, 0x11];
+      let pIdx = 0;
+      while (cw.length < dataCodewords) cw.push(pads[pIdx++ % 2]);
+
+      const ecBytes = rsEncode(cw, cfg.ec);
+      const finalBytes = [...cw, ...ecBytes];
+
+      const N = cfg.size;
+      const mod = Array.from({ length: N }, () => new Int8Array(N).fill(-1));
+      const func = Array.from({ length: N }, () => new Uint8Array(N));
+
+      const setFunc = (r, c, v) => {
+        if (r >= 0 && r < N && c >= 0 && c < N) { mod[r][c] = v ? 1 : 0; func[r][c] = 1; }
+      };
+
+      // Finder patterns
+      const placeFinder = (r0, c0) => {
+        for (let r = -1; r <= 7; r++) {
+          for (let c = -1; c <= 7; c++) {
+            const inOuter = r >= 0 && r <= 6 && c >= 0 && c <= 6;
+            const inBorder = r === 0 || r === 6 || c === 0 || c === 6;
+            const inCore = r >= 2 && r <= 4 && c >= 2 && c <= 4;
+            setFunc(r0 + r, c0 + c, inOuter && (inBorder || inCore));
+          }
+        }
+      };
+      placeFinder(0, 0);
+      placeFinder(0, N - 7);
+      placeFinder(N - 7, 0);
+
+      // Alignment pattern
+      if (cfg.align.length) {
+        const c = cfg.align[1];
+        for (let dr = -2; dr <= 2; dr++) {
+          for (let dc = -2; dc <= 2; dc++) {
+            const v = Math.max(Math.abs(dr), Math.abs(dc)) !== 1;
+            setFunc(c + dr, c + dc, v);
+          }
+        }
+      }
+
+      // Timing patterns
+      for (let i = 8; i < N - 8; i++) {
+        setFunc(6, i, i % 2 === 0);
+        setFunc(i, 6, i % 2 === 0);
+      }
+
+      // Reserve format info
+      for (let i = 0; i < 9; i++) { setFunc(8, i, 0); setFunc(i, 8, 0); }
+      for (let i = 0; i < 8; i++) { setFunc(8, N - 1 - i, 0); setFunc(N - 1 - i, 8, 0); }
+      setFunc(N - 8, 8, 1);
+
+      // Place data bits (mask 0: (r + c) % 2 === 0)
+      let bitIdx = 0;
+      let up = true;
+      for (let col = N - 1; col >= 1; col -= 2) {
+        if (col === 6) col--;
+        for (let step = 0; step < N; step++) {
+          const r = up ? (N - 1 - step) : step;
+          for (let dc = 0; dc < 2; dc++) {
+            const c = col - dc;
+            if (!func[r][c]) {
+              const byte = finalBytes[bitIdx >> 3] || 0;
+              const bit = (byte >> (7 - (bitIdx & 7))) & 1;
+              bitIdx++;
+              mod[r][c] = bit ^ (((r + c) % 2 === 0) ? 1 : 0);
+            }
+          }
+        }
+        up = !up;
+      }
+
+      // Format bits for Error Correction L (01) + Mask 0 (000) -> 0x77c4
+      const fmt = 0x77c4;
+      for (let i = 0; i < 6; i++) setFunc(8, i, (fmt >> i) & 1);
+      setFunc(8, 7, (fmt >> 6) & 1);
+      setFunc(8, 8, (fmt >> 7) & 1);
+      setFunc(7, 8, (fmt >> 8) & 1);
+      for (let i = 9; i < 15; i++) setFunc(14 - i, 8, (fmt >> i) & 1);
+
+      for (let i = 0; i < 8; i++) setFunc(N - 1 - i, 8, (fmt >> i) & 1);
+      for (let i = 8; i < 15; i++) setFunc(8, N - 15 + i, (fmt >> i) & 1);
+
+      return mod;
+    }
+
+    return {
+      draw(canvas, text) {
+        const mat = makeMatrix(text);
+        const n = mat.length;
+        const quiet = 2;
+        const cell = Math.floor(canvas.width / (n + quiet * 2));
+        const offset = Math.floor((canvas.width - n * cell) / 2);
+        const qctx = canvas.getContext('2d');
+        qctx.fillStyle = '#ffffff';
+        qctx.fillRect(0, 0, canvas.width, canvas.height);
+        qctx.fillStyle = '#090d16';
+        for (let r = 0; r < n; r++) {
+          for (let c = 0; c < n; c++) {
+            if (mat[r][c] === 1) {
+              qctx.fillRect(offset + c * cell, offset + r * cell, cell, cell);
+            }
+          }
+        }
+      }
+    };
+  })();
+
+  const qrCanvas = document.getElementById('qrCanvas');
+  const qrUrlInput = document.getElementById('qrUrlInput');
+
+  function renderCurrentQR() {
+    PureQR.draw(qrCanvas, qrUrlInput.value.trim() || window.location.href);
+  }
+
+  document.getElementById('openQrBtn').onclick = () => {
+    qrUrlInput.value = window.location.href;
+    renderCurrentQR();
+    document.getElementById('qrModal').classList.add('open');
+  };
+  qrUrlInput.addEventListener('input', renderCurrentQR);
+  document.getElementById('closeQrBtn').onclick = () => document.getElementById('qrModal').classList.remove('open');
+
+  document.getElementById('copyUrlBtn').onclick = () => {
+    navigator.clipboard?.writeText(qrUrlInput.value);
+    document.getElementById('copyUrlBtn').textContent = 'Copied!';
+    setTimeout(() => (document.getElementById('copyUrlBtn').textContent = 'Copy Link'), 1500);
+  };
+
+  document.getElementById('downloadQrBtn').onclick = () => {
+    const link = document.createElement('a');
+    link.download = 'journeys-on-the-highway-qr.png';
+    link.href = qrCanvas.toDataURL('image/png');
+    link.click();
+  };
+
+  // ==================== BUILT-IN CAMERA QR SCANNER ====================
+  let cameraStream = null;
+  let scanTimer = null;
+
+  async function startScanner() {
+    const video = document.getElementById('scannerVideo');
+    const status = document.getElementById('scannerStatus');
+    document.getElementById('scannerModal').classList.add('open');
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      video.srcObject = cameraStream;
+      status.textContent = 'Scanning for QR code...';
+
+      if ('BarcodeDetector' in window) {
+        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        scanTimer = setInterval(async () => {
+          try {
+            const codes = await detector.detect(video);
+            if (codes.length > 0 && codes[0].rawValue) {
+              const target = codes[0].rawValue;
+              status.textContent = 'Found! Opening...';
+              stopScanner();
+              if (target.startsWith('http://') || target.startsWith('https://')) {
+                window.location.href = target;
+              }
+            }
+          } catch (_) {}
+        }, 350);
+      } else {
+        status.textContent = 'Point your phone camera app directly at the QR code.';
+      }
+    } catch (err) {
+      status.textContent = 'Camera access blocked or unavailable.';
+    }
+  }
+
+  function stopScanner() {
+    if (scanTimer) clearInterval(scanTimer);
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+    }
+    document.getElementById('scannerModal').classList.remove('open');
+  }
+
+  document.getElementById('openScannerBtn').onclick = startScanner;
+  document.getElementById('closeScannerBtn').onclick = stopScanner;
+</script>
+</body>
+</html>
